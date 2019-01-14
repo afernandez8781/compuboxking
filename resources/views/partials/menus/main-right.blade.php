@@ -1,7 +1,7 @@
 <ul>
     @guest
     <li><a href="{{ route('register') }}">Regístrate</a></li>
-    <li><a href="{{ route('login') }}">Inisiar Sesión</a></li>
+    <li><a href="{{ route('login') }}">Iniciar Sesión</a></li>
     @else
     <li>
         <a href="{{ route('logout') }}"
