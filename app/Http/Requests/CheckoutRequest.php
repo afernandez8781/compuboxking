@@ -24,6 +24,7 @@ class CheckoutRequest extends FormRequest
     public function rules()
     {
         $emailValidation = auth()->user() ? 'required|email' : 'required|email|unique:users';
+
         return [
             'email' => $emailValidation,
             'name' => 'required',
@@ -38,7 +39,7 @@ class CheckoutRequest extends FormRequest
     public function messages()
     {
         return [
-            'email.unique' => 'Ya tienes una cuenta con esta dirección de correo electrónico. Por favor <a href="/login">inicie sesión</a> para continuar',
+            'email.unique' => 'You already have an account with this email address. Please <a href="/login">login</a> to continue.',
         ];
     }
 }

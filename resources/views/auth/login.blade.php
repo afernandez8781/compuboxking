@@ -43,7 +43,7 @@
                             <div class="col-md-6 col-md-offset-4">
                                 <div class="checkbox">
                                     <label>
-                                        <input type="checkbox" name="remember" {{ old('remember') ? 'checked' : '' }}> Recordarme
+                                        <input type="checkbox" name="remember" {{ old('remember') ? 'checked' : '' }}> Remember Me
                                     </label>
                                 </div>
                             </div>
@@ -52,14 +52,14 @@
                         <div class="form-group">
                             <div class="col-md-8 col-md-offset-4">
                                 <button type="submit" class="btn btn-primary">
-                                    Iniciar Sesión
+                                    Login
                                 </button>
 
                                 <a class="btn btn-link" href="{{ route('password.request') }}">
-                                    ¿Olvidaste tu contraseña?
+                                    Forgot Your Password?
                                 </a>
 
-                                <a href="{{ route('guestCheckout.index') }}">Revisa como envitado</a>
+                                <a href="{{ route('guestCheckout.index') }}">Checkout as a Guest</a>
                             </div>
                         </div>
                     </form>

@@ -9,17 +9,17 @@ use Illuminate\Http\Request;
 use TCG\Voyager\Facades\Voyager;
 use Illuminate\Support\Facades\DB;
 use TCG\Voyager\Events\BreadDataAdded;
+use Illuminate\Database\Eloquent\Model;
 use TCG\Voyager\Events\BreadDataDeleted;
 use TCG\Voyager\Events\BreadDataUpdated;
 use TCG\Voyager\Events\BreadImagesDeleted;
 use TCG\Voyager\Database\Schema\SchemaManager;
-use TCG\Voyager\Http\Controllers\VoyagerBaseController;
+use TCG\Voyager\Http\Controllers\VoyagerBreadController;
 use TCG\Voyager\Http\Controllers\Traits\BreadRelationshipParser;
 
-class ProductsController extends VoyagerBaseController
+class ProductsController extends VoyagerBreadController
 {
     use BreadRelationshipParser;
-
     //***************************************
     //               ____
     //              |  _ \
@@ -47,24 +47,15 @@ class ProductsController extends VoyagerBaseController
 
         $search = (object) ['value' => $request->get('s'), 'key' => $request->get('key'), 'filter' => $request->get('filter')];
         $searchable = $dataType->server_side ? array_keys(SchemaManager::describeTable(app($dataType->model_name)->getTable())->toArray()) : '';
-        $orderBy = $request->get('order_by', $dataType->order_column);
+        $orderBy = $request->get('order_by');
         $sortOrder = $request->get('sort_order', null);
-        $orderColumn = [];
-        if ($orderBy) {
-            $index = $dataType->browseRows->where('field', $orderBy)->keys()->first() + 1;
-            $orderColumn = [[$index, 'desc']];
-            if (!$sortOrder && isset($dataType->order_direction)) {
-                $sortOrder = $dataType->order_direction;
-                $orderColumn = [[$index, $dataType->order_direction]];
-            } else {
-                $orderColumn = [[$index, 'desc']];
-            }
-        }
 
         // Next Get or Paginate the actual content from the MODEL that corresponds to the slug DataType
         if (strlen($dataType->model_name) != 0) {
             $model = app($dataType->model_name);
             $query = $model::select('*');
+
+            $relationships = $this->getRelationships($dataType);
 
             // If a column has a relationship associated with it, we do not want to show that field
             $this->removeRelationshipField($dataType, 'browse');
@@ -76,15 +67,15 @@ class ProductsController extends VoyagerBaseController
             }
 
             if ($orderBy && in_array($orderBy, $dataType->fields())) {
-                $querySortOrder = (!empty($sortOrder)) ? $sortOrder : 'desc';
+                $querySortOrder = (!empty($sortOrder)) ? $sortOrder : 'DESC';
                 $dataTypeContent = call_user_func([
-                    $query->orderBy($orderBy, $querySortOrder),
+                    $query->with($relationships)->orderBy($orderBy, $querySortOrder),
                     $getter,
                 ]);
             } elseif ($model->timestamps) {
                 $dataTypeContent = call_user_func([$query->latest($model::CREATED_AT), $getter]);
             } else {
-                $dataTypeContent = call_user_func([$query->orderBy($model->getKeyName(), 'DESC'), $getter]);
+                $dataTypeContent = call_user_func([$query->with($relationships)->orderBy($model->getKeyName(), 'DESC'), $getter]);
             }
 
             // Replace relationships' keys for labels and create READ links if a slug is provided.
@@ -103,9 +94,6 @@ class ProductsController extends VoyagerBaseController
         // Check if server side pagination is enabled
         $isServerSide = isset($dataType->server_side) && $dataType->server_side;
 
-        // Check if a default search key is set
-        $defaultSearchKey = isset($dataType->default_search_key) ? $dataType->default_search_key : null;
-
         $view = 'voyager::bread.browse';
 
         if (view()->exists("voyager::$slug.browse")) {
@@ -118,59 +106,10 @@ class ProductsController extends VoyagerBaseController
             'isModelTranslatable',
             'search',
             'orderBy',
-            'orderColumn',
             'sortOrder',
             'searchable',
-            'isServerSide',
-            'defaultSearchKey'
+            'isServerSide'
         ));
-    }
-
-    //***************************************
-    //                _____
-    //               |  __ \
-    //               | |__) |
-    //               |  _  /
-    //               | | \ \
-    //               |_|  \_\
-    //
-    //  Read an item of our Data Type B(R)EAD
-    //
-    //****************************************
-
-    public function show(Request $request, $id)
-    {
-        $slug = $this->getSlug($request);
-
-        $dataType = Voyager::model('DataType')->where('slug', '=', $slug)->first();
-
-        if (strlen($dataType->model_name) != 0) {
-            $model = app($dataType->model_name);
-            $dataTypeContent = call_user_func([$model, 'findOrFail'], $id);
-        } else {
-            // If Model doest exist, get data from table name
-            $dataTypeContent = DB::table($dataType->name)->where('id', $id)->first();
-        }
-
-        // Replace relationships' keys for labels and create READ links if a slug is provided.
-        $dataTypeContent = $this->resolveRelations($dataTypeContent, $dataType, true);
-
-        // If a column has a relationship associated with it, we do not want to show that field
-        $this->removeRelationshipField($dataType, 'read');
-
-        // Check permission
-        $this->authorize('read', $dataTypeContent);
-
-        // Check if BREAD is Translatable
-        $isModelTranslatable = is_bread_translatable($dataTypeContent);
-
-        $view = 'voyager::bread.read';
-
-        if (view()->exists("voyager::$slug.read")) {
-            $view = "voyager::$slug.read";
-        }
-
-        return Voyager::view($view, compact('dataType', 'dataTypeContent', 'isModelTranslatable'));
     }
 
     //***************************************
@@ -191,12 +130,18 @@ class ProductsController extends VoyagerBaseController
 
         $dataType = Voyager::model('DataType')->where('slug', '=', $slug)->first();
 
+        // Compatibility with Model binding.
+        $id = $id instanceof Model ? $id->{$id->getKeyName()} : $id;
+
+        $relationships = $this->getRelationships($dataType);
+
         $dataTypeContent = (strlen($dataType->model_name) != 0)
-            ? app($dataType->model_name)->findOrFail($id)
+            ? app($dataType->model_name)->with($relationships)->findOrFail($id)
             : DB::table($dataType->name)->where('id', $id)->first(); // If Model doest exist, get data from table name
 
         foreach ($dataType->editRows as $key => $row) {
-            $dataType->editRows[$key]['col_width'] = isset($row->details->width) ? $row->details->width : 100;
+            $details = json_decode($row->details);
+            $dataType->editRows[$key]['col_width'] = isset($details->width) ? $details->width : 100;
         }
 
         // If a column has a relationship associated with it, we do not want to show that field
@@ -238,7 +183,7 @@ class ProductsController extends VoyagerBaseController
         $this->authorize('edit', $data);
 
         // Validate fields with ajax
-        $val = $this->validateBread($request->all(), $dataType->editRows, $dataType->name, $id);
+        $val = $this->validateBread($request->all(), $dataType->editRows);
 
         if ($val->fails()) {
             return response()->json(['errors' => $val->messages()]);
@@ -254,13 +199,13 @@ class ProductsController extends VoyagerBaseController
 
             CategoryProduct::where('product_id', $id)->delete();
 
-            // Re-insert if there's  at least one category checked
+            // Re-insert if there's at least one category checked
             $this->updateProductCategories($request, $id);
 
             return redirect()
                 ->route("voyager.{$dataType->slug}.index")
                 ->with([
-                    'message'    => __('voyager::generic.successfully_updated')." {$dataType->display_name_singular}",
+                    'message'    => __('voyager.generic.successfully_updated')." {$dataType->display_name_singular}",
                     'alert-type' => 'success',
                 ]);
         }
@@ -293,7 +238,8 @@ class ProductsController extends VoyagerBaseController
                             : false;
 
         foreach ($dataType->addRows as $key => $row) {
-            $dataType->addRows[$key]['col_width'] = isset($row->details->width) ? $row->details->width : 100;
+            $details = json_decode($row->details);
+            $dataType->addRows[$key]['col_width'] = isset($details->width) ? $details->width : 100;
         }
 
         // If a column has a relationship associated with it, we do not want to show that field
@@ -337,7 +283,7 @@ class ProductsController extends VoyagerBaseController
             return response()->json(['errors' => $val->messages()]);
         }
 
-        if (!$request->has('_validate')) {
+        if (!$request->ajax()) {
             $requestNew = $request;
             $requestNew['price'] = $request->price * 100;
 
@@ -347,116 +293,12 @@ class ProductsController extends VoyagerBaseController
 
             $this->updateProductCategories($request, $data->id);
 
-            if ($request->ajax()) {
-                return response()->json(['success' => true, 'data' => $data]);
-            }
-
             return redirect()
                 ->route("voyager.{$dataType->slug}.index")
                 ->with([
-                        'message'    => __('voyager::generic.successfully_added_new')." {$dataType->display_name_singular}",
+                        'message'    => __('voyager.generic.successfully_added_new')." {$dataType->display_name_singular}",
                         'alert-type' => 'success',
                     ]);
-        }
-    }
-
-    /**
-     * Delete all images related to a BREAD item.
-     *
-     * @param \Illuminate\Database\Eloquent\Model $data
-     * @param \Illuminate\Database\Eloquent\Model $rows
-     *
-     * @return void
-     */
-    public function deleteBreadImages($data, $rows)
-    {
-        foreach ($rows as $row) {
-            if ($data->{$row->field} != config('voyager.user.default_avatar')) {
-                $this->deleteFileIfExists($data->{$row->field});
-            }
-
-            if (isset($row->details->thumbnails)) {
-                foreach ($row->details->thumbnails as $thumbnail) {
-                    $ext = explode('.', $data->{$row->field});
-                    $extension = '.'.$ext[count($ext) - 1];
-
-                    $path = str_replace($extension, '', $data->{$row->field});
-
-                    $thumb_name = $thumbnail->name;
-
-                    $this->deleteFileIfExists($path.'-'.$thumb_name.$extension);
-                }
-            }
-        }
-
-        if ($rows->count() > 0) {
-            event(new BreadImagesDeleted($data, $rows));
-        }
-    }
-
-    /**
-     * Order BREAD items.
-     *
-     * @param string $table
-     *
-     * @return \Illuminate\Contracts\View\Factory|\Illuminate\View\View
-     */
-    public function order(Request $request)
-    {
-        $slug = $this->getSlug($request);
-
-        $dataType = Voyager::model('DataType')->where('slug', '=', $slug)->first();
-
-        // Check permission
-        $this->authorize('edit', app($dataType->model_name));
-
-        if (!isset($dataType->order_column) || !isset($dataType->order_display_column)) {
-            return redirect()
-            ->route("voyager.{$dataType->slug}.index")
-            ->with([
-                'message'    => __('voyager::bread.ordering_not_set'),
-                'alert-type' => 'error',
-            ]);
-        }
-
-        $model = app($dataType->model_name);
-        $results = $model->orderBy($dataType->order_column, $dataType->order_direction)->get();
-
-        $display_column = $dataType->order_display_column;
-
-        $dataRow = Voyager::model('DataRow')->whereDataTypeId($dataType->id)->whereField($display_column)->first();
-
-        $view = 'voyager::bread.order';
-
-        if (view()->exists("voyager::$slug.order")) {
-            $view = "voyager::$slug.order";
-        }
-
-        return Voyager::view($view, compact(
-            'dataType',
-            'display_column',
-            'dataRow',
-            'results'
-        ));
-    }
-
-    public function update_order(Request $request)
-    {
-        $slug = $this->getSlug($request);
-
-        $dataType = Voyager::model('DataType')->where('slug', '=', $slug)->first();
-
-        // Check permission
-        $this->authorize('edit', app($dataType->model_name));
-
-        $model = app($dataType->model_name);
-
-        $order = json_decode($request->input('order'));
-        $column = $dataType->order_column;
-        foreach ($order as $key => $item) {
-            $i = $model->findOrFail($item->id);
-            $i->$column = ($key + 1);
-            $i->save();
         }
     }
 
