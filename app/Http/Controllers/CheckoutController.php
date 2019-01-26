@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use Illuminate\Support\Facades\Mail;
+use App\Mail\OrderPlaced;
 use App\Order;
 use App\OrderProduct;
 use Illuminate\Http\Request;
@@ -63,9 +65,8 @@ class CheckoutController extends Controller
                 ],
             ]);
             
-            $this->addToOrdersTables($request, null);
-
-            // SUCCESSFUL
+            $order = $this->addToOrdersTables($request, null);
+            Mail::send(new OrderPlaced($order));
 
             Cart::instance('default')->destroy();
             session()->forget('coupon');
@@ -106,6 +107,8 @@ class CheckoutController extends Controller
                 'quantity' => $item->qty,
             ]);
         }
+
+        return $order;
     }
 
     private function getNumbers()
